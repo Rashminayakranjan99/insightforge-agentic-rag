@@ -1,1 +1,16 @@
  
+services:
+  insightforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: insightforge-agentic-rag
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

@@ -1,4 +1,4 @@
- from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer
 from core.vector import Vector
 import faiss
 import numpy as np

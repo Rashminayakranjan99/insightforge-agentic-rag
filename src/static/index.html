@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="InsightForge — AI-powered data analytics platform with professional storytelling insights and interactive dashboards">
+  <title>InsightForge — AI Data Analytics</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@14.0.0/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+</head>
+
+<body>
+  <div class="app-container">
+
+    <!-- ═══ Header ═══ -->
+    <header class="app-header">
+      <div class="logo">
+        <div class="logo-icon">⚡</div>
+        <span class="logo-text">InsightForge</span>
+      </div>
+      <div class="header-status">
+        <div class="status-badge" id="data-status">
+          <span class="status-dot inactive" id="status-dot"></span>
+          <span id="status-text">No data loaded</span>
+        </div>
+        <div class="status-badge" id="llm-status">
+          <span>🤖</span>
+          <span id="llm-provider">LLM Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ═══ Navigation ═══ -->
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-view="upload" id="tab-upload">
+        <span class="tab-icon">📁</span> Upload
+      </button>
+      <button class="nav-tab disabled" data-view="chat" id="tab-chat">
+        <span class="tab-icon">💬</span> Analysis Chat
+      </button>
+      <button class="nav-tab disabled" data-view="dashboard" id="tab-dashboard">
+        <span class="tab-icon">📊</span> Dashboard
+      </button>
+    </nav>
+
+    <!-- ═══ Main Content ═══ -->
+    <main class="main-content">
+
+      <!-- ── Upload View ── -->
+      <section class="view active" id="view-upload">
+        <div class="upload-container">
+          <div class="upload-hero">
+            <h2>Upload Your Data</h2>
+            <p>Drop a cleaned CSV file and let AI uncover powerful insights with professional analyst-grade storytelling
+            </p>
+          </div>
+
+          <div class="upload-zone" id="upload-zone">
+            <span class="upload-icon">📄</span>
+            <div class="upload-text">Drag & drop your CSV here</div>
+            <div class="upload-subtext">or click to browse • Max 50MB</div>
+            <input type="file" accept=".csv" class="upload-input" id="file-input">
+          </div>
+
+          <div class="upload-progress" id="upload-progress">
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Uploading...</div>
+          </div>
+
+          <div class="file-info" id="file-info">
+            <div class="file-info-header">
+              <div class="file-info-name">
+                <span>📊</span>
+                <span id="file-name"></span>
+              </div>
+              <span style="color:var(--accent-emerald);font-size:0.78rem">✓ Profiled</span>
+            </div>
+            <div class="file-stats">
+              <div class="stat-card">
+                <div class="stat-value" id="stat-rows">-</div>
+                <div class="stat-label">Rows</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="stat-cols">-</div>
+                <div class="stat-label">Columns</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="stat-numeric">-</div>
+                <div class="stat-label">Numeric</div>
+              </div>
+            </div>
+            <button class="start-btn" id="start-analysis-btn">🚀 Start Analyzing</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Chat View ── -->
+      <section class="view" id="view-chat">
+        <div class="chat-layout">
+          <div class="chat-panel">
+            <div class="chat-messages" id="chat-messages">
+              <div class="welcome-message" id="welcome-msg">
+                <h3>🔍 Ready to Explore Your Data</h3>
+                <p>Ask anything about your dataset — I'll analyze it like a senior data analyst</p>
+                <div class="suggestion-chips" id="suggestion-chips">
+                  <button class="suggestion-chip" data-query="Give me an executive summary of this dataset">📋 Executive
+                    Summary</button>
+                  <button class="suggestion-chip" data-query="What are the key trends and patterns in this data?">📈 Key
+                    Trends</button>
+                  <button class="suggestion-chip"
+                    data-query="Show me the distribution of the most important numeric column">📊 Distribution</button>
+                  <button class="suggestion-chip" data-query="What are the top categories and their performance?">🏆 Top
+                    Categories</button>
+                  <button class="suggestion-chip" data-query="Are there any correlations between numeric columns?">🔗
+                    Correlations</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="chat-input-container">
+              <div class="chat-input-wrapper">
+                <textarea class="chat-input" id="chat-input" placeholder="Ask about your data..." rows="1"></textarea>
+                <button class="send-btn" id="send-btn" disabled>➤</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="viz-panel">
+            <div class="viz-panel-header">
+              <div class="viz-panel-title">
+                <span>📊</span> Visualization
+              </div>
+              <span class="viz-panel-badge" id="viz-type-badge">No Chart</span>
+            </div>
+            <div class="chart-container" id="chart-container">
+              <div class="chart-placeholder" id="chart-placeholder">
+                <div class="chart-placeholder-icon">📊</div>
+                <div class="chart-placeholder-text">Charts will appear here as<br>you ask questions</div>
+              </div>
+              <canvas id="main-chart" style="display:none"></canvas>
+            </div>
+            <button class="add-to-dash-btn" id="add-to-dash-btn" style="display:none">
+              ➕ Add to Dashboard
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Dashboard View ── -->
+      <section class="view" id="view-dashboard">
+        <div class="dashboard-view">
+          <div class="dashboard-toolbar">
+            <h3>📊 Dashboard Builder</h3>
+            <div class="toolbar-actions">
+              <button class="toolbar-btn" id="custom-chart-btn">
+                ➕ Custom Chart
+              </button>
+              <button class="toolbar-btn" id="download-html-btn">
+                📥 Download HTML
+              </button>
+              <button class="toolbar-btn" id="download-img-btn">
+                🖼️ Download Image
+              </button>
+              <button class="toolbar-btn primary" id="save-dashboard-btn">
+                💾 Save Dashboard
+              </button>
+            </div>
+          </div>
+
+          <h4 style="margin: 8px 0; color: var(--text-secondary); font-size: 0.85rem;">
+            Select charts to add to your dashboard:
+          </h4>
+
+          <div class="chart-picker" id="chart-picker">
+            <!-- Populated dynamically -->
+          </div>
+
+          <h4 style="margin: 16px 0 8px; color: var(--text-secondary); font-size: 0.85rem;">
+            📋 Your Dashboard:
+          </h4>
+
+          <div class="dashboard-grid" id="dashboard-grid">
+            <div class="dashboard-empty" id="dashboard-empty">
+              <div class="dashboard-empty-icon">📋</div>
+              <div class="dashboard-empty-text">Your dashboard is empty</div>
+              <div class="dashboard-empty-sub">Select charts above or chat to generate insights</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ═══ Custom Chart Modal ═══ -->
+  <div class="modal-overlay" id="chart-modal">
+    <div class="modal">
+      <h3>📊 Create Custom Chart</h3>
+      <div class="modal-field">
+        <label>Chart Type</label>
+        <select id="modal-chart-type">
+          <option value="bar">Bar Chart</option>
+          <option value="line">Line Chart</option>
+          <option value="pie">Pie Chart</option>
+          <option value="doughnut">Doughnut Chart</option>
+          <option value="scatter">Scatter Plot</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label>X-Axis Column</label>
+        <select id="modal-x-col"></select>
+      </div>
+      <div class="modal-field">
+        <label>Y-Axis Column (Numeric)</label>
+        <select id="modal-y-col">
+          <option value="">None (count)</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label>Aggregation</label>
+        <select id="modal-agg">
+          <option value="mean">Mean</option>
+          <option value="sum">Sum</option>
+          <option value="count">Count</option>
+          <option value="median">Median</option>
+          <option value="min">Min</option>
+          <option value="max">Max</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn" id="modal-cancel">Cancel</button>
+        <button class="modal-btn primary" id="modal-create">Create Chart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Toast ═══ -->
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>

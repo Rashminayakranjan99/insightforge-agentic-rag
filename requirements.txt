@@ -1,1 +1,10 @@
- 
+flask
+flask-cors
+groq
+google-generativeai
+python-dotenv
+pandas
+numpy
+faiss-cpu
+sentence-transformers
+markdown
