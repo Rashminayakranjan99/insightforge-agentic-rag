@@ -23,6 +23,10 @@ class PlannerAgent:
         Returns:
             dict with analysis_type, target_columns, visualization, etc.
         """
+        heuristic = self._heuristic_plan(user_query, profile)
+        if heuristic is not None:
+            return heuristic
+
         # Build a compact schema description for the LLM
         columns_desc = []
         for col_name, col_info in profile.get("columns", {}).items():
@@ -68,6 +72,34 @@ Output the analysis plan as JSON.""",
             plan["visualization"] = "bar"
 
         return plan
+
+    def _heuristic_plan(self, user_query: str, profile: dict) -> dict:
+        """Fast deterministic plan for high-frequency intents."""
+        q = (user_query or "").strip().lower()
+        if not q:
+            return None
+
+        relation_terms = ("relation", "relationship", "correlation", "associated", "impact")
+        if any(term in q for term in relation_terms):
+            numeric_cols = [
+                col_name for col_name, col_info in profile.get("columns", {}).items()
+                if col_info.get("is_numeric")
+            ]
+            if len(numeric_cols) >= 2:
+                return {
+                    "analysis_type": "correlation",
+                    "target_columns": numeric_cols[:4],
+                    "group_by": None,
+                    "aggregation": None,
+                    "sort_by": None,
+                    "sort_order": "desc",
+                    "top_n": 12,
+                    "filter_condition": None,
+                    "visualization": "bar",
+                    "description": "Strongest relationships across numeric columns",
+                }
+
+        return None
 
     def _parse_json(self, text: str) -> dict:
         """Extract JSON from LLM response, handling markdown fences."""

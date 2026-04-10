@@ -101,37 +101,68 @@ class VizTool:
         return config
 
     def build_kpi_cards(self, df: pd.DataFrame, profile: dict) -> Dict[str, Any]:
-        """Build KPI summary cards data (rendered with custom HTML, not Chart.js)."""
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        kpis = []
+        """Build KPI summary cards with BI-style DAX-equivalent measures."""
+        value_col = self._pick_value_column(df)
+        dim_col = self._pick_dimension_column(df)
+        date_col = self._pick_date_column(df)
 
-        # Total rows
-        kpis.append({
+        kpis = [{
             "label": "Total Records",
             "value": f"{len(df):,}",
             "icon": "database",
             "color": "#6366f1",
-        })
+            "delta": "DAX: COUNTROWS(FactTable)",
+        }]
 
-        # First numeric column aggregates
-        if numeric_cols:
-            col = numeric_cols[0]
+        if value_col:
+            total_val = float(df[value_col].sum())
+            avg_val = float(df[value_col].mean())
             kpis.append({
-                "label": f"Avg {col}",
-                "value": f"{df[col].mean():,.2f}",
-                "icon": "trending-up",
-                "color": "#a855f7",
-                "delta": f"Range: {df[col].min():,.0f} - {df[col].max():,.0f}",
-            })
-
-        if len(numeric_cols) >= 2:
-            col = numeric_cols[1]
-            kpis.append({
-                "label": f"Total {col}",
-                "value": f"{df[col].sum():,.2f}",
+                "label": f"Total {value_col}",
+                "value": f"{total_val:,.2f}",
                 "icon": "bar-chart",
                 "color": "#ec4899",
+                "delta": f"DAX: SUM(FactTable[{value_col}])",
             })
+            kpis.append({
+                "label": f"Avg {value_col}",
+                "value": f"{avg_val:,.2f}",
+                "icon": "trending-up",
+                "color": "#a855f7",
+                "delta": f"DAX: AVERAGE(FactTable[{value_col}])",
+            })
+
+            if dim_col:
+                grouped = df.groupby(dim_col)[value_col].sum().sort_values(ascending=False)
+                if not grouped.empty and total_val != 0:
+                    top_label = str(grouped.index[0])
+                    top_share = float(grouped.iloc[0]) / total_val * 100
+                    kpis.append({
+                        "label": f"Top {dim_col} Share",
+                        "value": f"{top_share:.1f}%",
+                        "icon": "check-circle",
+                        "color": "#10b981",
+                        "delta": (
+                            f"{top_label} | DAX: DIVIDE(SUMX(TOPN(1,VALUES(FactTable[{dim_col}])),"
+                            f"[Total {value_col}]), [Total {value_col}])"
+                        ),
+                    })
+
+            if date_col:
+                monthly = self._monthly_series(df, date_col, value_col)
+                if len(monthly) >= 2:
+                    prev_val = float(monthly.iloc[-2])
+                    last_val = float(monthly.iloc[-1])
+                    if prev_val != 0:
+                        growth_pct = (last_val - prev_val) / abs(prev_val) * 100
+                        kpis.append({
+                            "label": "MoM Growth",
+                            "value": f"{growth_pct:+.1f}%",
+                            "icon": "trending-up",
+                            "color": "#14b8a6",
+                            "delta": "DAX: DIVIDE([Total]-CALCULATE([Total],DATEADD(Date[Date],-1,MONTH)),"
+                                     "CALCULATE([Total],DATEADD(Date[Date],-1,MONTH)))",
+                        })
 
         # Missing data %
         total_cells = df.shape[0] * df.shape[1]
@@ -144,7 +175,176 @@ class VizTool:
             "delta": f"{missing_pct:.1f}% missing",
         })
 
-        return {"type": "kpi_cards", "kpis": kpis}
+        return {"type": "kpi_cards", "kpis": kpis[:6]}
+
+    def build_pareto_chart(self, df: pd.DataFrame, dim_col: str, value_col: str,
+                           top_n: int = 10) -> Dict[str, Any]:
+        """Build Pareto chart: contribution bars + cumulative percentage line."""
+        grouped = df.groupby(dim_col)[value_col].sum().sort_values(ascending=False).head(top_n)
+        total = grouped.sum()
+        if total == 0:
+            cumulative_pct = pd.Series([0.0] * len(grouped), index=grouped.index)
+        else:
+            cumulative_pct = (grouped.cumsum() / total * 100).round(2)
+
+        labels = grouped.index.astype(str).tolist()
+        bar_values = grouped.round(2).tolist()
+        line_values = cumulative_pct.tolist()
+        n = len(labels)
+
+        return {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "type": "bar",
+                        "label": f"Total {value_col}",
+                        "data": bar_values,
+                        "backgroundColor": [VIZ_CHART_COLORS[i % len(VIZ_CHART_COLORS)] for i in range(n)],
+                        "borderColor": [VIZ_CHART_BORDERS[i % len(VIZ_CHART_BORDERS)] for i in range(n)],
+                        "borderWidth": 1,
+                        "yAxisID": "y",
+                    },
+                    {
+                        "type": "line",
+                        "label": "Cumulative %",
+                        "data": line_values,
+                        "borderColor": "rgba(16, 185, 129, 1)",
+                        "backgroundColor": "rgba(16, 185, 129, 0.15)",
+                        "borderWidth": 3,
+                        "pointRadius": 3,
+                        "pointBackgroundColor": "rgba(16, 185, 129, 1)",
+                        "tension": 0.3,
+                        "fill": False,
+                        "yAxisID": "y1",
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": f"Pareto: {value_col} by {dim_col}",
+                        "font": {"size": 13, "weight": "bold"},
+                        "color": "rgba(240,240,245,0.9)",
+                    },
+                    "legend": {"display": True},
+                },
+                "scales": {
+                    "x": {"ticks": {"color": "rgba(139,139,158,0.8)"}, "grid": {"color": "rgba(255,255,255,0.06)"}},
+                    "y": {"beginAtZero": True, "ticks": {"color": "rgba(139,139,158,0.8)"}, "grid": {"color": "rgba(255,255,255,0.06)"}},
+                    "y1": {
+                        "position": "right",
+                        "beginAtZero": True,
+                        "max": 100,
+                        "ticks": {"color": "rgba(139,139,158,0.8)"},
+                        "grid": {"drawOnChartArea": False},
+                    },
+                },
+            },
+        }
+
+    def build_time_intelligence_chart(self, df: pd.DataFrame, date_col: str,
+                                      value_col: str) -> Dict[str, Any]:
+        """Build monthly total with moving average (time-intelligence BI view)."""
+        monthly = self._monthly_series(df, date_col, value_col)
+        monthly = monthly.tail(18)
+        rolling = monthly.rolling(window=3, min_periods=1).mean()
+
+        labels = [idx.strftime("%Y-%m") for idx in monthly.index]
+        return {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": f"Monthly {value_col}",
+                        "data": monthly.round(2).tolist(),
+                        "borderColor": VIZ_CHART_BORDERS[0],
+                        "backgroundColor": "rgba(99, 102, 241, 0.15)",
+                        "borderWidth": 3,
+                        "tension": 0.35,
+                        "pointRadius": 2,
+                        "fill": True,
+                    },
+                    {
+                        "label": "3-Period Moving Avg",
+                        "data": rolling.round(2).tolist(),
+                        "borderColor": "rgba(16, 185, 129, 1)",
+                        "backgroundColor": "rgba(16, 185, 129, 0.0)",
+                        "borderWidth": 2,
+                        "borderDash": [6, 4],
+                        "pointRadius": 1,
+                        "tension": 0.25,
+                        "fill": False,
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": f"Time Intelligence: {value_col} trend",
+                        "font": {"size": 13, "weight": "bold"},
+                        "color": "rgba(240,240,245,0.9)",
+                    },
+                    "legend": {"display": True},
+                },
+                "scales": {
+                    "x": {"ticks": {"color": "rgba(139,139,158,0.8)"}, "grid": {"color": "rgba(255,255,255,0.06)"}},
+                    "y": {"beginAtZero": True, "ticks": {"color": "rgba(139,139,158,0.8)"}, "grid": {"color": "rgba(255,255,255,0.06)"}},
+                },
+            },
+        }
+
+    def _pick_value_column(self, df: pd.DataFrame) -> str:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if not numeric_cols:
+            return ""
+        return max(numeric_cols, key=lambda c: float(df[c].std(skipna=True) or 0.0))
+
+    def _pick_dimension_column(self, df: pd.DataFrame) -> str:
+        categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+        ranked = []
+        for col in categorical_cols:
+            nunique = int(df[col].nunique(dropna=True))
+            if 2 <= nunique <= 40:
+                ranked.append((nunique, col))
+        if not ranked:
+            return ""
+        ranked.sort()
+        return ranked[0][1]
+
+    def _pick_date_column(self, df: pd.DataFrame) -> str:
+        for col in df.columns:
+            try:
+                if np.issubdtype(df[col].dtype, np.datetime64):
+                    return col
+            except TypeError:
+                pass
+            if df[col].dtype == "object":
+                sample = df[col].dropna().head(200)
+                if sample.empty:
+                    continue
+                parsed = pd.to_datetime(sample, errors="coerce", infer_datetime_format=True)
+                parse_ratio = float(parsed.notna().mean())
+                if parse_ratio >= 0.8:
+                    return col
+        return ""
+
+    def _monthly_series(self, df: pd.DataFrame, date_col: str, value_col: str) -> pd.Series:
+        temp = df[[date_col, value_col]].dropna().copy()
+        temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce")
+        temp = temp.dropna(subset=[date_col])
+        if temp.empty:
+            return pd.Series(dtype="float64")
+        temp["period"] = temp[date_col].dt.to_period("M").dt.to_timestamp()
+        return temp.groupby("period")[value_col].sum().sort_index()
 
     def build_stacked_bar(self, df: pd.DataFrame, cat_col: str, val_col: str,
                           stack_col: str, title: str) -> Dict[str, Any]:
@@ -291,6 +491,9 @@ class VizTool:
         charts = []
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+        value_col = self._pick_value_column(df)
+        dim_col = self._pick_dimension_column(df)
+        date_col = self._pick_date_column(df)
 
         # 1. KPI Cards (always first)
         kpi_data = self.build_kpi_cards(df, profile)
@@ -409,5 +612,29 @@ class VizTool:
                 "config": self.build_quick_chart(df, "bar", numeric_cols[:8], means,
                                                   "Column Averages Comparison"),
             })
+
+        # 10. Pareto view (DAX-style contribution analysis)
+        if dim_col and value_col:
+            try:
+                charts.append({
+                    "id": f"pareto_{dim_col}_{value_col}",
+                    "title": f"Pareto: {value_col} by {dim_col}",
+                    "config": self.build_pareto_chart(df, dim_col, value_col),
+                })
+            except Exception:
+                pass
+
+        # 11. Time intelligence trend (monthly + moving average)
+        if date_col and value_col:
+            try:
+                time_cfg = self.build_time_intelligence_chart(df, date_col, value_col)
+                if len(time_cfg.get("data", {}).get("labels", [])) >= 2:
+                    charts.append({
+                        "id": f"time_{date_col}_{value_col}",
+                        "title": f"Time Intelligence: {value_col}",
+                        "config": time_cfg,
+                    })
+            except Exception:
+                pass
 
         return charts

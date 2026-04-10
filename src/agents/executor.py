@@ -4,7 +4,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, List
-from config import VIZ_CHART_COLORS, VIZ_CHART_BORDERS
+from config import VIZ_CHART_COLORS, VIZ_CHART_BORDERS, RELATION_TOP_K
 
 
 class ExecutorAgent:
@@ -41,7 +41,7 @@ class ExecutorAgent:
             if analysis_type == "aggregation":
                 result = self._aggregation(df, target_cols, group_by, aggregation, sort_order, top_n)
             elif analysis_type == "correlation":
-                result = self._correlation(df, target_cols)
+                result = self._correlation(df, target_cols, top_n=top_n)
                 viz_type = "scatter" if len(target_cols) == 2 else "bar"
             elif analysis_type == "distribution":
                 result = self._distribution(df, target_cols)
@@ -101,10 +101,12 @@ class ExecutorAgent:
                 "value_column": value_col,
             }
 
-    def _correlation(self, df, target_cols):
+    def _correlation(self, df, target_cols, top_n=None):
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if len(target_cols) >= 2 and all(c in numeric_cols for c in target_cols[:2]):
-            col_x, col_y = target_cols[0], target_cols[1]
+        target_numeric = [c for c in target_cols if c in numeric_cols]
+
+        if len(target_numeric) == 2:
+            col_x, col_y = target_numeric[0], target_numeric[1]
             corr = df[col_x].corr(df[col_y])
             sampled = df[[col_x, col_y]].dropna().sample(min(200, len(df)), random_state=42)
             return {
@@ -115,14 +117,39 @@ class ExecutorAgent:
                 "y_label": col_y,
                 "type": "correlation",
             }
-        else:
-            cols = [c for c in target_cols if c in numeric_cols] or numeric_cols[:5]
-            corr_matrix = df[cols].corr().round(3)
-            return {
-                "labels": cols,
-                "matrix": corr_matrix.values.tolist(),
-                "type": "correlation_matrix",
-            }
+
+        cols = target_numeric or numeric_cols[:8]
+        if len(cols) < 2:
+            return {"labels": [], "values": [], "type": "correlation_pairs"}
+
+        corr_matrix = df[cols].corr()
+        pairs = []
+        for i in range(len(cols)):
+            for j in range(i + 1, len(cols)):
+                corr_val = corr_matrix.iloc[i, j]
+                if pd.isna(corr_val):
+                    continue
+                pairs.append({
+                    "pair": f"{cols[i]} <> {cols[j]}",
+                    "correlation": round(float(corr_val), 4),
+                    "abs_correlation": round(float(abs(corr_val)), 4),
+                    "x_label": cols[i],
+                    "y_label": cols[j],
+                })
+
+        if not pairs:
+            return {"labels": [], "values": [], "type": "correlation_pairs"}
+
+        limit = top_n if isinstance(top_n, int) and top_n > 0 else RELATION_TOP_K
+        pairs = sorted(pairs, key=lambda x: x["abs_correlation"], reverse=True)[:limit]
+        return {
+            "labels": [p["pair"] for p in pairs],
+            "values": [p["correlation"] for p in pairs],
+            "type": "correlation_pairs",
+            "pairs": pairs,
+            "strongest_positive": max(pairs, key=lambda x: x["correlation"]),
+            "strongest_negative": min(pairs, key=lambda x: x["correlation"]),
+        }
 
     def _distribution(self, df, target_cols):
         if not target_cols:
@@ -297,6 +324,51 @@ class ExecutorAgent:
                 },
             }
 
+        if result.get("type") == "correlation_pairs":
+            corr_values = result.get("values", [])
+            colors = [
+                "rgba(16, 185, 129, 0.8)" if v >= 0 else "rgba(239, 68, 68, 0.8)"
+                for v in corr_values
+            ]
+            borders = [
+                "rgba(16, 185, 129, 1)" if v >= 0 else "rgba(239, 68, 68, 1)"
+                for v in corr_values
+            ]
+            return {
+                "type": "bar",
+                "data": {
+                    "labels": result.get("labels", []),
+                    "datasets": [{
+                        "label": plan.get("description", "Correlation strength"),
+                        "data": corr_values,
+                        "backgroundColor": colors,
+                        "borderColor": borders,
+                        "borderWidth": 2,
+                        "borderRadius": 4,
+                    }],
+                },
+                "options": {
+                    "indexAxis": "y",
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "plugins": {
+                        "title": {"display": True, "text": plan.get("description", "Column relationships")},
+                        "legend": {"display": False},
+                    },
+                    "scales": {
+                        "x": {
+                            "min": -1,
+                            "max": 1,
+                            "grid": {"color": "rgba(255,255,255,0.06)"},
+                        },
+                        "y": {
+                            "ticks": {"autoSkip": False},
+                            "grid": {"color": "rgba(255,255,255,0.06)"},
+                        },
+                    },
+                },
+            }
+
         # Map histogram to bar
         chart_type = viz_type
         if chart_type == "histogram":
@@ -363,7 +435,7 @@ class ExecutorAgent:
 
     def _extract_summary(self, df, target_cols, result):
         """Extract key stats for the synthesizer's storytelling."""
-        return {
+        summary = {
             "total_rows": len(df),
             "total_columns": len(df.columns),
             "numeric_columns": df.select_dtypes(include=[np.number]).columns.tolist(),
@@ -371,3 +443,7 @@ class ExecutorAgent:
             "analysis_type": result.get("type", "general"),
             "data_points": len(result.get("labels", result.get("x_values", []))),
         }
+        if result.get("type") == "correlation_pairs":
+            summary["strongest_positive"] = result.get("strongest_positive")
+            summary["strongest_negative"] = result.get("strongest_negative")
+        return summary

@@ -23,6 +23,8 @@ UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTENSIONS = {"csv"}
 MAX_FILE_SIZE_MB = 50
 MAX_PROFILE_ROWS = 50000
+CSV_READ_CHUNK_SIZE = 10000
+RELATION_TOP_K = 12
 
 # ── Analyst Persona System Prompt ────────────────────────────────────────
 ANALYST_SYSTEM_PROMPT = """You are **InsightForge AI** — a Senior Data Analyst with 15+ years of experience at top consulting firms (McKinsey, BCG, Bain).

@@ -456,9 +456,10 @@ body::before {
 /* ── Chat View ─────────────────────────────────────────────────────── */
 .chat-layout {
   display: grid;
-  grid-template-columns: 1fr 400px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
   gap: 20px;
   height: calc(100vh - 160px);
+  align-items: stretch;
 }
 
 .chat-panel {
@@ -468,6 +469,7 @@ body::before {
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  min-width: 0;
 }
 
 .chat-messages {
@@ -700,6 +702,7 @@ body::before {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  min-width: 0;
 }
 
 .viz-panel-header {
@@ -734,11 +737,16 @@ body::before {
   min-height: 250px;
   position: relative;
   margin-bottom: 12px;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .chart-container canvas {
+  position: absolute;
+  inset: 0;
   width: 100% !important;
   height: 100% !important;
+  max-width: 100%;
 }
 
 .chart-placeholder {
@@ -900,14 +908,17 @@ body::before {
 .chart-pick-preview {
   height: 160px;
   position: relative;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 /* Dashboard Grid */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   min-height: 300px;
+  align-items: start;
 }
 
 .dashboard-card {
@@ -916,6 +927,10 @@ body::before {
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-md);
   position: relative;
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .dashboard-card-title {
@@ -928,6 +943,18 @@ body::before {
 .dashboard-card-chart {
   height: 220px;
   position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  min-width: 0;
+}
+
+.dashboard-card-chart canvas,
+.chart-pick-preview canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
 }
 
 .dashboard-card .remove-btn {
@@ -1293,3 +1320,31 @@ body::before {
   grid-column: 1 / -1;
 }
 
+/* ── Download Buttons (Dashboard Toolbar) ──────────────────────────── */
+#download-html-btn,
+#download-img-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+#download-html-btn::before,
+#download-img-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-subtle);
+  opacity: 0;
+  transition: opacity var(--transition-base);
+}
+
+#download-html-btn:hover,
+#download-img-btn:hover {
+  border-color: var(--accent-purple);
+  color: var(--accent-purple);
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.15);
+}
+
+#download-html-btn:hover::before,
+#download-img-btn:hover::before {
+  opacity: 1;
+}

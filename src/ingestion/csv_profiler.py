@@ -24,8 +24,11 @@ class CSVProfiler:
 
     # ── public API ───────────────────────────────────────────────────
 
-    def profile(self, csv_path: str) -> Dict[str, Any]:
-        df = pd.read_csv(csv_path, nrows=50000)  # safety cap
+    def profile(self, csv_path: str, df: pd.DataFrame = None,
+                chunk_info: Dict[str, Any] = None) -> Dict[str, Any]:
+        # Reuse uploaded dataframe when available so profiling reflects full loaded data.
+        if df is None:
+            df = pd.read_csv(csv_path)
 
         id_columns: List[str] = []
         profile = {
@@ -34,6 +37,11 @@ class CSVProfiler:
             "columns": {},
             "sample_rows": self._safe_sample(df, 3),
             "dropped_columns": [],
+            "chunking": chunk_info or {
+                "enabled": False,
+                "chunk_size": None,
+                "chunk_count": 1,
+            },
         }
 
         for col in df.columns:

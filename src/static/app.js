@@ -47,7 +47,12 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     $(viewId).classList.add("active");
 
     if (tab.dataset.view === "dashboard") {
-      fetchAllCharts().then(() => renderChartPicker());
+      fetchAllCharts().then(() => {
+        renderChartPicker();
+        setTimeout(resizeAllCharts, 120);
+      });
+    } else {
+      setTimeout(resizeAllCharts, 120);
     }
   });
 });
@@ -131,10 +136,14 @@ async function uploadFile(file) {
         enableTabs();
 
         const dropped = data.profile.dropped_columns || [];
+        const chunking = (data.profile && data.profile.chunking) || null;
+        const chunkText = chunking && chunking.enabled
+          ? " | Processed in " + chunking.chunk_count + " chunk(s)"
+          : "";
         if (dropped.length > 0) {
-          showToast("Auto-removed " + dropped.length + " ID column(s): " + dropped.join(", "), "info");
+          showToast("Auto-removed " + dropped.length + " ID column(s): " + dropped.join(", ") + chunkText, "info");
         } else {
-          showToast("Data uploaded and profiled successfully!", "success");
+          showToast("Data uploaded and profiled successfully!" + chunkText, "success");
         }
 
         // Pre-fetch charts for dashboard
@@ -279,12 +288,54 @@ function renderMainChart(config) {
   }
 
   const ctx = mainChartCanvas.getContext("2d");
-  state.currentChart = new Chart(ctx, JSON.parse(JSON.stringify(config)));
+  state.currentChart = new Chart(ctx, normalizeChartConfig(config, "main"));
+  setTimeout(resizeAllCharts, 80);
 }
 
-function renderChartInCanvas(canvas, config) {
+function renderChartInCanvas(canvas, config, context) {
   const ctx = canvas.getContext("2d");
-  return new Chart(ctx, JSON.parse(JSON.stringify(config)));
+  return new Chart(ctx, normalizeChartConfig(config, context || "dashboard"));
+}
+
+function normalizeChartConfig(config, context) {
+  var cfg = JSON.parse(JSON.stringify(config || {}));
+  cfg.options = cfg.options || {};
+  cfg.options.responsive = true;
+  cfg.options.maintainAspectRatio = false;
+
+  cfg.options.plugins = cfg.options.plugins || {};
+  cfg.options.layout = cfg.options.layout || {};
+  if (cfg.options.layout.padding == null) cfg.options.layout.padding = 8;
+
+  if (context === "picker") {
+    cfg.options.plugins.title = { display: false };
+    if (cfg.type !== "radar" && cfg.type !== "polarArea" && cfg.type !== "pie" && cfg.type !== "doughnut") {
+      cfg.options.plugins.legend = { display: false };
+    }
+  }
+
+  if (cfg.options.scales) {
+    if (cfg.options.scales.x) {
+      cfg.options.scales.x.ticks = cfg.options.scales.x.ticks || {};
+      if (cfg.options.scales.x.ticks.maxRotation == null) cfg.options.scales.x.ticks.maxRotation = 30;
+      if (cfg.options.scales.x.ticks.autoSkip == null) cfg.options.scales.x.ticks.autoSkip = true;
+    }
+  }
+
+  return cfg;
+}
+
+function resizeAllCharts() {
+  try {
+    if (state.currentChart && state.currentChart.resize) state.currentChart.resize();
+  } catch (e) {}
+
+  Object.values(state.pickerInstances).forEach((inst) => {
+    try { if (inst && inst.resize) inst.resize(); } catch (e) {}
+  });
+  Object.values(state.dashboardInstances).forEach((inst) => {
+    try { if (inst && inst.resize) inst.resize(); } catch (e) {}
+  });
 }
 
 // -- KPI Card Rendering --------------------------------------------------
@@ -400,17 +451,8 @@ function renderChartPicker() {
       } else {
         const canvas = $("picker-" + chart.id);
         if (canvas && chart.config) {
-          const miniConfig = JSON.parse(JSON.stringify(chart.config));
-          miniConfig.options = miniConfig.options || {};
-          miniConfig.options.responsive = true;
-          miniConfig.options.maintainAspectRatio = false;
-          miniConfig.options.plugins = miniConfig.options.plugins || {};
-          miniConfig.options.plugins.title = { display: false };
-          if (miniConfig.type !== "radar" && miniConfig.type !== "polarArea") {
-            miniConfig.options.plugins.legend = { display: false };
-          }
           try {
-            state.pickerInstances[chart.id] = renderChartInCanvas(canvas, miniConfig);
+            state.pickerInstances[chart.id] = renderChartInCanvas(canvas, chart.config, "picker");
           } catch (e) {
             console.error("Picker chart error:", e);
           }
@@ -418,6 +460,7 @@ function renderChartPicker() {
       }
     }, 100);
   });
+  setTimeout(resizeAllCharts, 160);
 }
 
 function toggleDashboardChart(chart, card) {
@@ -488,7 +531,7 @@ function renderDashboard() {
         const canvas = $("dash-" + chart.id);
         if (canvas && chart.config) {
           try {
-            state.dashboardInstances[chart.id] = renderChartInCanvas(canvas, chart.config);
+            state.dashboardInstances[chart.id] = renderChartInCanvas(canvas, chart.config, "dashboard");
           } catch (e) {
             console.error("Dashboard chart error:", e);
           }
@@ -496,6 +539,7 @@ function renderDashboard() {
       }
     }, 100);
   });
+  setTimeout(resizeAllCharts, 160);
 }
 
 function removeDashboardChart(id) {
@@ -632,6 +676,241 @@ $("save-dashboard-btn").addEventListener("click", async () => {
   }
 });
 
+// -- Download Dashboard as HTML ------------------------------------------
+$("download-html-btn").addEventListener("click", () => {
+  if (state.dashboardCharts.length === 0) {
+    showToast("Add charts to dashboard first!", "error");
+    return;
+  }
+
+  showToast("Generating HTML file...", "info");
+
+  // Serialize all chart configs & KPI data for the standalone page
+  const chartsJSON = JSON.stringify(state.dashboardCharts);
+
+  const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InsightForge Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"><\/script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #0a0a0f;
+      color: #f0f0f5;
+      padding: 32px;
+      min-height: 100vh;
+    }
+    body::before {
+      content: '';
+      position: fixed; top: -50%; left: -50%;
+      width: 200%; height: 200%;
+      background:
+        radial-gradient(ellipse at 20% 50%, rgba(99,102,241,0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(168,85,247,0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(236,72,153,0.04) 0%, transparent 50%);
+      z-index: -1;
+      pointer-events: none;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .header h1 {
+      font-size: 1.8rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #6366f1, #a855f7, #ec4899);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 6px;
+    }
+    .header p {
+      color: #8b8b9e;
+      font-size: 0.85rem;
+    }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+    .card {
+      padding: 20px;
+      background: linear-gradient(145deg, rgba(20,20,35,0.9), rgba(15,15,25,0.95));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+    }
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #8b8b9e;
+      margin-bottom: 12px;
+    }
+    .card-chart { height: 260px; position: relative; }
+    .kpi-row { grid-column: 1 / -1; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+    }
+    .kpi-card {
+      padding: 18px;
+      background: linear-gradient(145deg, rgba(20,20,35,0.9), rgba(15,15,25,0.95));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0;
+      width: 3px; height: 100%;
+      border-radius: 3px 0 0 3px;
+    }
+    .kpi-card[data-color="#6366f1"]::before { background: #6366f1; }
+    .kpi-card[data-color="#a855f7"]::before { background: #a855f7; }
+    .kpi-card[data-color="#ec4899"]::before { background: #ec4899; }
+    .kpi-card[data-color="#10b981"]::before { background: #10b981; }
+    .kpi-icon { font-size: 1.3rem; margin-bottom: 6px; opacity: 0.7; }
+    .kpi-value {
+      font-size: 1.5rem; font-weight: 800;
+      color: #f0f0f5; line-height: 1.2; letter-spacing: -0.5px;
+    }
+    .kpi-label {
+      font-size: 0.72rem; color: #5a5a6e;
+      text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;
+    }
+    .kpi-delta { font-size: 0.7rem; color: #8b8b9e; margin-top: 4px; }
+    .footer {
+      text-align: center;
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      color: #5a5a6e;
+      font-size: 0.75rem;
+    }
+    @media (max-width: 800px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+      body { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>⚡ InsightForge Dashboard</h1>
+    <p>Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+  </div>
+  <div class="dashboard-grid" id="grid"></div>
+  <div class="footer">Powered by InsightForge — AI Data Analytics</div>
+
+  <script>
+    var charts = ${chartsJSON};
+    var icons = {"database":"\\uD83D\\uDDC4\\uFE0F","trending-up":"\\uD83D\\uDCC8","bar-chart":"\\uD83D\\uDCCA","check-circle":"\\u2705"};
+    var grid = document.getElementById("grid");
+
+    charts.forEach(function(chart) {
+      var isKPI = chart.config && chart.config.type === "kpi_cards";
+      var card = document.createElement("div");
+      card.className = "card" + (isKPI ? " kpi-row" : "");
+
+      if (isKPI) {
+        var html = '<div class="card-title">' + (chart.title || "KPI") + '</div>';
+        html += '<div class="kpi-grid">';
+        (chart.config.kpis || []).forEach(function(kpi) {
+          html += '<div class="kpi-card" data-color="' + (kpi.color || "#6366f1") + '">';
+          html += '<div class="kpi-icon">' + (icons[kpi.icon] || "\\uD83D\\uDCCA") + '</div>';
+          html += '<div class="kpi-value">' + kpi.value + '</div>';
+          html += '<div class="kpi-label">' + kpi.label + '</div>';
+          if (kpi.delta) html += '<div class="kpi-delta">' + kpi.delta + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        card.innerHTML = html;
+      } else {
+        card.innerHTML = '<div class="card-title">' + (chart.title || "Chart") + '</div>' +
+          '<div class="card-chart"><canvas id="c-' + chart.id + '"></canvas></div>';
+      }
+
+      grid.appendChild(card);
+
+      if (!isKPI) {
+        setTimeout(function() {
+          var canvas = document.getElementById("c-" + chart.id);
+          if (canvas && chart.config) {
+            var cfg = JSON.parse(JSON.stringify(chart.config));
+            cfg.options = cfg.options || {};
+            cfg.options.responsive = true;
+            cfg.options.maintainAspectRatio = false;
+            new Chart(canvas.getContext("2d"), cfg);
+          }
+        }, 100);
+      }
+    });
+  <\/script>
+</body>
+</html>`;
+
+  // Create download
+  const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "insightforge-dashboard-" + new Date().toISOString().slice(0, 10) + ".html";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast("Dashboard downloaded as HTML!", "success");
+});
+
+// -- Download Dashboard as Image -----------------------------------------
+$("download-img-btn").addEventListener("click", async () => {
+  if (state.dashboardCharts.length === 0) {
+    showToast("Add charts to dashboard first!", "error");
+    return;
+  }
+
+  showToast("Capturing dashboard image...", "info");
+
+  try {
+    const target = $("dashboard-grid");
+    const canvas = await html2canvas(target, {
+      backgroundColor: "#0a0a0f",
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      onclone: function(clonedDoc) {
+        // Ensure cloned element is visible
+        var clonedGrid = clonedDoc.getElementById("dashboard-grid");
+        if (clonedGrid) {
+          clonedGrid.style.display = "grid";
+        }
+      }
+    });
+
+    canvas.toBlob(function(blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "insightforge-dashboard-" + new Date().toISOString().slice(0, 10) + ".png";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Dashboard image downloaded!", "success");
+    }, "image/png");
+  } catch (err) {
+    console.error("Screenshot error:", err);
+    showToast("Error capturing: " + err.message, "error");
+  }
+});
+
 // -- Toast ---------------------------------------------------------------
 function showToast(message, type) {
   type = type || "info";
@@ -649,4 +928,10 @@ function showToast(message, type) {
 }
 
 // -- Init ----------------------------------------------------------------
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resizeAllCharts, 150);
+});
+
 console.log("%cInsightForge Loaded", "color: #6366f1; font-size: 14px; font-weight: bold;");

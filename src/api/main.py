@@ -15,7 +15,7 @@ sys.path.insert(0, str(SRC_DIR))
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
 
-from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, MAX_PROFILE_ROWS
+from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, CSV_READ_CHUNK_SIZE
 from core.llm_client import LLMRouter
 from agents.planner import PlannerAgent
 from agents.executor import ExecutorAgent
@@ -57,8 +57,29 @@ def _get_session(session_id: str) -> dict:
             "charts": [],       # Generated chart configs
             "dashboards": [],   # Saved dashboards
             "csv_path": None,
+            "chunk_info": None,
         }
     return _sessions[session_id]
+
+
+def _load_csv_with_chunking(csv_path: Path, chunk_size: int = CSV_READ_CHUNK_SIZE):
+    """Read CSV using pandas chunking and stitch chunks for full-data analysis."""
+    chunks = []
+    chunk_count = 0
+
+    for chunk in pd.read_csv(str(csv_path), chunksize=chunk_size):
+        chunks.append(chunk)
+        chunk_count += 1
+
+    if not chunks:
+        return pd.DataFrame(), {"enabled": True, "chunk_size": chunk_size, "chunk_count": 0}
+
+    df = pd.concat(chunks, ignore_index=True)
+    return df, {
+        "enabled": True,
+        "chunk_size": chunk_size,
+        "chunk_count": chunk_count,
+    }
 
 
 # ── Routes ───────────────────────────────────────────────────────────────
@@ -88,11 +109,11 @@ def upload_csv():
         filepath = UPLOAD_FOLDER / filename
         file.save(str(filepath))
 
-        # Profile the CSV
-        profile = profiler.profile(str(filepath))
+        # Load CSV with automatic chunking so analysis uses full uploaded data.
+        df, chunk_info = _load_csv_with_chunking(filepath)
 
-        # Load DataFrame
-        df = pd.read_csv(str(filepath), nrows=MAX_PROFILE_ROWS)
+        # Profile the CSV based on the full loaded dataframe
+        profile = profiler.profile(str(filepath), df=df, chunk_info=chunk_info)
 
         # Drop ID / high-cardinality junk columns (e.g. customer_id, uuid)
         df = profiler.clean_dataframe(df, profile)
@@ -107,6 +128,7 @@ def upload_csv():
         sess["df"] = df
         sess["profile"] = profile
         sess["csv_path"] = str(filepath)
+        sess["chunk_info"] = chunk_info
 
         # Generate overview charts for dashboard builder
         overview_charts = viz_tool.generate_overview_charts(df, profile)
@@ -208,6 +230,7 @@ def get_columns():
         "columns": sess["profile"].get("columns", {}),
         "filename": sess["profile"].get("filename", ""),
         "row_count": sess["profile"].get("row_count", 0),
+        "chunking": sess["profile"].get("chunking", sess.get("chunk_info")),
     })
 
 
